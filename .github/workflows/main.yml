@@ -42,7 +42,7 @@ jobs:
 
       # 第四步: 运行你的 Python 脚本 (V12.1: 修正为 V12 脚本)
       - name: '运行 yfinance 抓取脚本 (V12)'
-        run: python yfinance_fetcher_v12_scoring.py
+        run: python yf251110.py
 
       # 第五步: 准备发布所需变量
       # (a) 生成一个唯一的标签名, 例如 report-2025-11-10-08-00-00
