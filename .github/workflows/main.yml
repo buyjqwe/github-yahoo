@@ -3,6 +3,7 @@
 #
 # 必须将此文件放置在您代码库的 .github/workflows/ 文件夹下
 # 路径: .github/workflows/main.yml
+# (V12.1 - 更新：发布到 Release 页面)
 # -----------------------------------------------------------------
 
 name: '定时运行港股数据抓取'
@@ -25,7 +26,6 @@ jobs:
     # 定义任务步骤
     steps:
       # 第一步: 检出 (Checkout) 你的代码
-      # 这样 Runner 才能访问到你的 .py 脚本
       - name: '检出代码'
         uses: actions/checkout@v4
 
@@ -37,27 +37,47 @@ jobs:
           cache: 'pip' # 缓存依赖项，加快后续运行速度
 
       # 第三步: 安装 Python 依赖
-      # 它会自动查找 requirements.txt 文件并安装
       - name: '安装依赖'
         run: pip install -r requirements.txt
 
-      # 第四步: 运行你的 Python 脚本
-      # 这是关键步骤
-      - name: '运行 yfinance 抓取脚本'
-        run: python yf251110.py
+      # 第四步: 运行你的 Python 脚本 (V12.1: 修正为 V12 脚本)
+      - name: '运行 yfinance 抓取脚本 (V12)'
+        run: python yfinance_fetcher_v12_scoring.py
 
-      # 第五步: 上传生成的 Excel 文件作为 "Artifact"
-      # "Artifact" 是 GitHub Actions 中用于保存运行结果的术语
-      - name: '上传 Excel 报告'
-        uses: actions/upload-artifact@v4
+      # 第五步: 准备发布所需变量
+      # (a) 生成一个唯一的标签名, 例如 report-2025-11-10-08-00-00
+      # (b) 获取 Python 脚本生成的 .xlsx 文件名
+      - name: '准备发布所需变量'
+        id: vars
+        run: |
+          echo "tag=report-$(date +'%Y-%m-%d-%H-%M-%S')" >> $GITHUB_OUTPUT
+          echo "filename=$(ls ./*.xlsx)" >> $GITHUB_OUTPUT
+
+      # 第六步: 创建 Release 并上传 Excel 文件 (替换原有的 upload-artifact)
+      # https://github.com/svenstaro/upload-release-action
+      - name: '创建 Release 并上传报告'
+        uses: svenstaro/upload-release-action@v2
         with:
-          # (必须) Artifact 的名称
-          name: Hk-Stock-Report 
+          # 仓库令牌，用于授权
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
           
-          # (必须) 要上传的文件的路径
-          # *.xlsx 是一个通配符，会匹配所有 .xlsx 结尾的文件
-          path: ./*.xlsx
+          # 要上传的文件 (从上一步获取)
+          file: ${{ steps.vars.outputs.filename }}
           
-          # (可选) Artifact 的保存时间 (天)
-          # 默认是 90 天，这里可以自定义
-          retention-days: 30
+          # Git 标签名 (例如: report-2025-11-10-08-00-00)
+          tag: ${{ steps.vars.outputs.tag }}
+          
+          # Release 的标题
+          release_name: '港股数据报告 ${{ steps.vars.outputs.tag }}'
+          
+          # Release 的描述
+          body: '这是由 GitHub Actions 自动生成的最新港股数据报告。'
+          
+          # 允许覆盖已有的同名标签 (以防万一)
+          overwrite: true 
+          
+          # 这不是一个草稿
+          draft: false
+          
+          # 这不是一个预发布版
+          prerelease: false
