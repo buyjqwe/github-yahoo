@@ -351,7 +351,7 @@ def get_hk_stock_info_combined(tickers, output_filename="hk_stocks_info_combined
 
     all_combined_data = []
     total_tickers = len(tickers)
-    MAX_WORKERS = 5 
+    MAX_WORKERS = 3 
 
     print(f"开始并发获取 {total_tickers} 只股票的合并信息 (使用 {MAX_WORKERS} 个线程)...")
     print("注意：V11版将保存所有获取到的列。")
