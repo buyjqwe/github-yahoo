@@ -249,185 +249,152 @@ ALL_TRANSLATIONS = {
 }
 # --- 翻译字典结束 ---
 
-# --- V12 新增：量化打分函数 ---
-# V16 重构: 1000分制，20项指标
-def calculate_quant_score(data):
+# --- V18 核心: 辅助函数 (已在 V19 中移除) ---
+# (V19) 移除了 score_higher_is_better
+# (V19) 移除了 score_lower_is_better
+
+# --- V12 新增：量化打分函数 (已在 V19 中移除) ---
+# (V19) 移除了 calculate_quant_score (逻辑已移至 V19 的 calculate_ranks_and_score)
+
+
+# --- V19 新增: 排名和打分函数 ---
+def calculate_ranks_and_score(df):
     """
-    (V16) 根据传入的股票数据字典，计算一个量化分数 (总分 1000)。
-    综合 20 项指标，涵盖估值、盈利、健康、股息和市场五个维度。
+    (V20) 综合排名(Sum-of-Ranks)模型:
+    1. "排名第几该项就打几分": 对20个指标进行排名 (1, 2, 3...)。
+    2. "总分值越低越好": 将所有排名相加，总分最低者为最优。
     """
-    score = 0
+    print("开始进行 V20 (Sum-of-Ranks) 排名打分...")
     
-    # 安全获取函数 (V17 修复)
-    def get_val(key):
-        val = data.get(key)
-        # 必须检查 val 是 int 或 float, 否则 "N/A" > 0 会导致 TypeError
-        if isinstance(val, (int, float)):
-            return val
-        # 如果 val 是 None, "N/A" 或其他非数字类型，则返回 None
-        return None
+    # 辅助函数：安全地将列转换为数字，非数字变为 NaN
+    def safe_to_numeric(column):
+        return pd.to_numeric(column, errors='coerce')
 
-    try:
-        # --- 1. 估值 (Valuation) (总分 200) ---
-        pe = get_val('trailingPE')
-        pb = get_val('priceToBook')
-        fwd_pe = get_val('forwardPE')
-        
-        # 指标 1: 市盈率 (PE) (80分)
-        if pe is not None and pe > 0:
-            if pe < 10: score += 80
-            elif pe < 15: score += 60
-            elif pe < 20: score += 40
-            elif pe < 30: score += 20
-            else: score += 5
+    # 1. 强制转换所有用于打分的列为数字
+    # 估值
+    df['trailingPE'] = safe_to_numeric(df.get('trailingPE'))
+    df['priceToBook'] = safe_to_numeric(df.get('priceToBook'))
+    df['forwardPE'] = safe_to_numeric(df.get('forwardPE'))
+    # 盈利
+    df['returnOnEquity'] = safe_to_numeric(df.get('returnOnEquity'))
+    df['profitMargins'] = safe_to_numeric(df.get('profitMargins'))
+    df['operatingMargins'] = safe_to_numeric(df.get('operatingMargins'))
+    df['revenueGrowth'] = safe_to_numeric(df.get('revenueGrowth'))
+    df['earningsGrowth'] = safe_to_numeric(df.get('earningsGrowth'))
+    # 健康
+    df['debtToEquity'] = safe_to_numeric(df.get('debtToEquity'))
+    df['currentRatio'] = safe_to_numeric(df.get('currentRatio'))
+    df['quickRatio'] = safe_to_numeric(df.get('quickRatio'))
+    df['operatingCashflow'] = safe_to_numeric(df.get('operatingCashflow'))
+    df['freeCashflow'] = safe_to_numeric(df.get('freeCashflow'))
+    df['Net Income'] = safe_to_numeric(df.get('Net Income'))
+    # 股息
+    df['dividendYield'] = safe_to_numeric(df.get('dividendYield'))
+    df['payoutRatio'] = safe_to_numeric(df.get('payoutRatio'))
+    # 市场
+    df['heldPercentInstitutions'] = safe_to_numeric(df.get('heldPercentInstitutions'))
+    df['heldPercentInsiders'] = safe_to_numeric(df.get('heldPercentInsiders'))
+    df['targetMeanPrice'] = safe_to_numeric(df.get('targetMeanPrice'))
+    df['currentPrice'] = safe_to_numeric(df.get('currentPrice'))
 
-        # 指标 2: 市净率 (PB) (80分)
-        if pb is not None and pb > 0:
-            if pb < 1.0: score += 80
-            elif pb < 1.5: score += 60
-            elif pb < 2.0: score += 40
-            elif pb < 3.0: score += 20
-        
-        # 指标 3: 远期 PE 优于 TTM PE (40分)
-        if (fwd_pe is not None and pe is not None and 
-            fwd_pe > 0 and fwd_pe < pe):
-            score += 40 # 预期盈利增长
-
-        # --- 2. 盈利能力 (Profitability) (总分 300) ---
-        roe = get_val('returnOnEquity')
-        profit_margin = get_val('profitMargins')
-        op_margin = get_val('operatingMargins')
-        rev_growth = get_val('revenueGrowth')
-        earn_growth = get_val('earningsGrowth')
-        
-        # 指标 4: 净资产收益率 (ROE) (100分)
-        if roe is not None:
-            if roe > 0.20: score += 100
-            elif roe > 0.15: score += 70
-            elif roe > 0.10: score += 40
-            elif roe > 0: score += 10
-            
-        # 指标 5: 净利润率 (Profit Margin) (80分)
-        if profit_margin is not None:
-            if profit_margin > 0.20: score += 80
-            elif profit_margin > 0.15: score += 60
-            elif profit_margin > 0.10: score += 40
-            elif profit_margin > 0: score += 10
-
-        # 指标 6: 营业利润率 (Operating Margin) (60分)
-        if op_margin is not None:
-            if op_margin > 0.20: score += 60
-            elif op_margin > 0.15: score += 40
-            elif op_margin > 0.10: score += 20
-            elif op_margin > 0: score += 5
-            
-        # 指标 7: 营收增长 (Revenue Growth) (30分)
-        if rev_growth is not None:
-            if rev_growth > 0.10: score += 30
-            elif rev_growth > 0.05: score += 20
-            elif rev_growth > 0: score += 10
-            
-        # 指标 8: 盈利增长 (Earnings Growth) (30分)
-        if earn_growth is not None:
-            if earn_growth > 0.10: score += 30
-            elif earn_growth > 0.05: score += 20
-            elif earn_growth > 0: score += 10
-
-        # --- 3. 财务健康 (Financial Health) (总分 300) ---
-        de_ratio = get_val('debtToEquity')
-        curr_ratio = get_val('currentRatio')
-        quick_ratio = get_val('quickRatio')
-        op_cf = get_val('operatingCashflow') # 来自 info
-        free_cf = get_val('freeCashflow') # 来自 info
-        net_income = get_val('Net Income') # 来自财报
-        
-        # 指标 9: 债转股 (D/E Ratio) (80分) (越低越好)
-        if de_ratio is not None:
-            if de_ratio < 30: score += 80
-            elif de_ratio < 60: score += 60
-            elif de_ratio < 100: score += 40
-            elif de_ratio < 150: score += 20
-
-        # 指标 10: 流动比率 (Current Ratio) (60分)
-        if curr_ratio is not None:
-            if curr_ratio > 2.0: score += 60
-            elif curr_ratio > 1.5: score += 40
-            elif curr_ratio > 1.0: score += 20
-            
-        # 指标 11: 速动比率 (Quick Ratio) (60分)
-        if quick_ratio is not None:
-            if quick_ratio > 1.2: score += 60
-            elif quick_ratio > 1.0: score += 40
-            elif quick_ratio > 0.8: score += 20
-            
-        # 指标 12: 经营现金流 (OCF) (50分)
-        if op_cf is not None and net_income is not None:
-            if op_cf > net_income: score += 50 # 优于净利润
-            elif op_cf > 0: score += 20
-        elif op_cf is not None and op_cf > 0:
-            score += 20 # 备用检查
-            
-        # 指标 13: 自由现金流 (Free Cash Flow) (50分)
-        if free_cf is not None and free_cf > 0:
-            score += 50
-
-        # --- 4. 股息与回报 (Dividends & Returns) (总分 100) ---
-        dy_yield = get_val('dividendYield')
-        payout = get_val('payoutRatio')
-        
-        # 指标 14: 股息率 (Dividend Yield) (50分)
-        if dy_yield is not None:
-            if dy_yield > 0.05: score += 50
-            elif dy_yield > 0.03: score += 30
-            elif dy_yield > 0.01: score += 10
-            
-        # 指标 15: 派息比率 (Payout Ratio) (50分)
-        if payout is not None:
-            if 0 < payout < 0.6: score += 50 # 健康可持续
-            elif 0.6 <= payout < 0.9: score += 20 # 偏高
-            # (如果 payout <= 0 或 >= 0.9，则为 0 分)
-
-        # --- 5. 市场与分析师 (Market & Analysts) (总分 100) ---
-        rec_key = get_val('recommendationKey')
-        inst_hold = get_val('heldPercentInstitutions')
-        insider_hold = get_val('heldPercentInsiders')
-        target_mean = get_val('targetMeanPrice')
-        current_price = get_val('currentPrice')
-        
-        # 指标 16: 分析师建议 (40分)
-        if rec_key is not None:
-            if rec_key == 'strong_buy': score += 40
-            elif rec_key == 'buy': score += 30
-            elif rec_key == 'hold': score += 15
-        
-        # 指标 17: 机构持股 (20分)
-        if inst_hold is not None:
-            if inst_hold > 0.6: score += 20
-            elif inst_hold > 0.4: score += 10
-            
-        # 指标 18: 内部人士持股 (20分)
-        if insider_hold is not None:
-            if insider_hold > 0.1: score += 20
-            elif insider_hold > 0.05: score += 10
-            
-        # 指标 19 & 20: 目标均价 (20分)
-        if target_mean is not None and current_price is not None and current_price > 0:
-            if target_mean > (current_price * 1.1): # 至少 10% 上涨空间
-                score += 20
-        
-        return int(score) # 返回整数分数
+    # --- V20 新增: 预计算 V19 中的"布尔/奖励"项，使其可排名 ---
     
-    except Exception as e:
-        print(f"  [警告] 计算分数时出错: {e}")
-        return 0 # 出错则返回 0 分
+    # 1. 远期PE/TTM PE (越小越好)
+    df['fwd_pe_ratio'] = df['forwardPE'] / df['trailingPE']
+    # 确保 fwd_pe_ratio > 0, 否则无效 (例如 亏损 / 盈利)
+    df.loc[df['fwd_pe_ratio'] <= 0, 'fwd_pe_ratio'] = pd.NA
+    
+    # 2. OCF / 净利润 (越大越好)
+    df['ocf_ratio'] = df['operatingCashflow'] / df['Net Income']
+    
+    # 3. 派息比率 (0.2-0.6 最佳, 越接近 0.4 越好)
+    # 我们对 "距离 0.4 的绝对值" 进行排名 (越小越好)
+    df['payout_abs_diff'] = (df['payoutRatio'] - 0.4).abs()
+    
+    # 4. 分析师建议 (数字越小越好)
+    rec_key_map = {'strong_buy': 1, 'buy': 2, 'hold': 3, 'sell': 4, 'strong_sell': 5}
+    df['rec_numeric'] = df['recommendationKey'].map(rec_key_map)
+    
+    # 5. 目标上涨空间 (越大越好)
+    df['target_upside'] = df['targetMeanPrice'] / df['currentPrice']
 
-# --- V12 结束 ---
+    # --- V20 核心 ---
+    # 2. 计算各项指标的“绝对排名 (Absolute Rank)”
+    # ascending=True:  值越小，排名越靠前 (rank 1 = 最好)
+    # ascending=False: 值越大，排名越靠前 (rank 1 = 最好)
+    # pct=False:      将排名转换为 1, 2, 3...
+    # na_option='bottom': 将 NaN (缺失值) 放在最差的排名
+    
+    ranks = {}
+    
+    # --- 1. 估值 (Valuation) ---
+    ranks['pe_rank'] = df['trailingPE'].rank(ascending=True, na_option='bottom', pct=False)
+    ranks['pb_rank'] = df['priceToBook'].rank(ascending=True, na_option='bottom', pct=False)
+    ranks['fwd_pe_ratio_rank'] = df['fwd_pe_ratio'].rank(ascending=True, na_option='bottom', pct=False) # 越小越好
+
+    # --- 2. 盈利能力 (Profitability) ---
+    ranks['roe_rank'] = df['returnOnEquity'].rank(ascending=False, na_option='bottom', pct=False)
+    ranks['profit_margin_rank'] = df['profitMargins'].rank(ascending=False, na_option='bottom', pct=False)
+    ranks['op_margin_rank'] = df['operatingMargins'].rank(ascending=False, na_option='bottom', pct=False)
+    ranks['rev_growth_rank'] = df['revenueGrowth'].rank(ascending=False, na_option='bottom', pct=False)
+    ranks['earn_growth_rank'] = df['earningsGrowth'].rank(ascending=False, na_option='bottom', pct=False)
+
+    # --- 3. 财务健康 (Financial Health) ---
+    ranks['de_ratio_rank'] = df['debtToEquity'].rank(ascending=True, na_option='bottom', pct=False)
+    ranks['curr_ratio_rank'] = df['currentRatio'].rank(ascending=False, na_option='bottom', pct=False)
+    ranks['quick_ratio_rank'] = df['quickRatio'].rank(ascending=False, na_option='bottom', pct=False)
+    ranks['ocf_ratio_rank'] = df['ocf_ratio'].rank(ascending=False, na_option='bottom', pct=False) # OCF/NI 越大越好
+    ranks['fcf_rank'] = df['freeCashflow'].rank(ascending=False, na_option='bottom', pct=False) # FCF 越大越好
+
+    # --- 4. 股息与回报 (Dividends & Returns) ---
+    ranks['dy_yield_rank'] = df['dividendYield'].rank(ascending=False, na_option='bottom', pct=False)
+    ranks['payout_abs_diff_rank'] = df['payout_abs_diff'].rank(ascending=True, na_option='bottom', pct=False) # 距离 0.4 越近越好
+
+    # --- 5. 市场与分析师 (Market & Analysts) ---
+    ranks['inst_hold_rank'] = df['heldPercentInstitutions'].rank(ascending=False, na_option='bottom', pct=False)
+    ranks['insider_hold_rank'] = df['heldPercentInsiders'].rank(ascending=False, na_option='bottom', pct=False)
+    ranks['rec_numeric_rank'] = df['rec_numeric'].rank(ascending=True, na_option='bottom', pct=False) # 1(strong_buy) 最好
+    ranks['target_upside_rank'] = df['target_upside'].rank(ascending=False, na_option='bottom', pct=False) # 越大越好
+
+    # (V20) 额外增加一个 'forwardPE' 排名
+    ranks['fwd_pe_rank'] = df['forwardPE'].rank(ascending=True, na_option='bottom', pct=False)
+
+    # 3. 汇总分数 (V20: 简单的将所有排名相加，总分越低越好)
+    df['quantScore'] = (
+        ranks['pe_rank'] +
+        ranks['pb_rank'] +
+        ranks['fwd_pe_ratio_rank'] +
+        ranks['roe_rank'] +
+        ranks['profit_margin_rank'] +
+        ranks['op_margin_rank'] +
+        ranks['rev_growth_rank'] +
+        ranks['earn_growth_rank'] +
+        ranks['de_ratio_rank'] +
+        ranks['curr_ratio_rank'] +
+        ranks['quick_ratio_rank'] +
+        ranks['ocf_ratio_rank'] +
+        ranks['fcf_rank'] +
+        ranks['dy_yield_rank'] +
+        ranks['payout_abs_diff_rank'] +
+        ranks['inst_hold_rank'] +
+        ranks['insider_hold_rank'] +
+        ranks['rec_numeric_rank'] +
+        ranks['target_upside_rank'] +
+        ranks['fwd_pe_rank'] # 20 个指标
+    )
+    
+    # 将最终分数转换为整数
+    df['quantScore'] = df['quantScore'].fillna(pd.NA).astype('Int64') # 允许 NaN
+    
+    print("V20 (Sum-of-Ranks) 排名打分计算完成。")
+    return df
+# --- V19 结束 ---
 
 
 def process_ticker(ticker_symbol):
     """
     为单个股票代码获取所有数据。
-    (V14: 增加智能重试逻辑)
+    (V19: 移除了 V12/V18 的打分逻辑，只抓取数据)
     """
     
     combined_data = {'symbol': ticker_symbol}
@@ -436,8 +403,8 @@ def process_ticker(ticker_symbol):
         ticker = yf.Ticker(ticker_symbol)
         
         # --- (V14 修复: 智能重试) ---
-        MAX_RETRIES = 3
-        RETRY_DELAY = 30 # 429限速错误的基础等待时间 (秒)
+        MAX_RETRIES = 5
+        RETRY_DELAY = 60 # 429限速错误的基础等待时间 (秒)
         
         info = None
         for attempt in range(MAX_RETRIES):
@@ -510,37 +477,8 @@ def process_ticker(ticker_symbol):
         except Exception:
             pass 
 
-        # 4. 获取 Cashflow (只保留最近一个财年)
-        try:
-            cf = ticker.cashflow
-            if not cf.empty:
-                latest_cf = cf.iloc[:, 0] 
-                if isinstance(latest_cf.name, pd.Timestamp):
-                    latest_cf.name = latest_cf.name.tz_localize(None)
-                combined_data.update(latest_cf)
-        except Exception:
-            pass 
-            
-        # 5. 获取 Recommendations (只保留最新一条评级)
-        try:
-            rec = ticker.recommendations
-            if not rec.empty:
-                latest_rec = rec.iloc[-1] 
-                if isinstance(latest_rec.name, pd.Timestamp):
-                    latest_rec.name = latest_rec.name.tz_localize(None)
-                combined_data.update(latest_rec)
-        except Exception:
-            pass 
-
-        # --- V12 新增: 计算量化分数 ---
-        # 在所有数据都抓取完毕后，统一计算分数
-        try:
-            score = calculate_quant_score(combined_data)
-            combined_data['quantScore'] = score
-        except Exception as e:
-            print(f"  [警告] {ticker_symbol} 计算分数时出错: {e}")
-            combined_data['quantScore'] = 0 # V16 修复: 出错时给 0 分
-        # --- V12 结束 ---
+        # --- (V19) 移除了 V12/V18 的打分逻辑 ---
+        # 打分将在所有数据收集完毕后，在主函数中统一进行
 
         # (V14 修复) 增加基础延迟
         sleep_time = random.uniform(2.0, 4.0)
@@ -559,7 +497,7 @@ i = 0
 
 def get_hk_stock_info_combined(tickers, output_filename="hk_stocks_info_combined.xlsx"):
     """
-    (V14 - 增加智能重试)
+    (V20 - 综合排名打分)
     使用多线程并发获取指定港股列表的多种信息，
     将所有获取到的列合并到 Excel 的一个工作表中。
     """
@@ -569,7 +507,8 @@ def get_hk_stock_info_combined(tickers, output_filename="hk_stocks_info_combined
     all_combined_data = []
     total_tickers = len(tickers)
     # (V14 修复) 降低并发数
-    MAX_WORKERS = 2
+    MAX_WORKERS = 4 
+
     print(f"开始并发获取 {total_tickers} 只股票的合并信息 (使用 {MAX_WORKERS} 个线程)...")
     print("注意：V14版将保存所有获取到的列 (包含量化分数和智能重试)。")
 
@@ -594,9 +533,21 @@ def get_hk_stock_info_combined(tickers, output_filename="hk_stocks_info_combined
 
     try:
         if all_combined_data:
-            # V11: 直接使用 df_combined 进行后续操作
-            df_combined = pd.DataFrame(all_combined_data)
-            df_combined = df_combined.rename(columns=ALL_TRANSLATIONS)
+            # V19: 先用 df_raw (原始英文 key) 进行打分
+            df_raw = pd.DataFrame(all_combined_data)
+            
+            # --- V19 新增: Rank 排名打分 ---
+            try:
+                df_raw_scored = calculate_ranks_and_score(df_raw)
+            except Exception as e:
+                print(f"[严重错误] V20 排名打分失败: {e}")
+                print("将跳过打分，仅保存原始数据...")
+                df_raw['quantScore'] = 0 # 出错时给0分
+                df_raw_scored = df_raw
+            # --- V19 结束 ---
+
+            # V19: 使用打分后的 df_raw_scored 进行翻译
+            df_combined = df_raw_scored.rename(columns=ALL_TRANSLATIONS)
             
             # --- V11: 移除了白名单筛选步骤 ---
             print(f"已获取 {len(df_combined.columns)} 列数据，将全部保存。")
