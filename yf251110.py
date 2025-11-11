@@ -3,11 +3,10 @@ import pandas as pd
 import time
 import concurrent.futures
 import random
+import sys  # V13.1 修复: 导入 sys 模块以读取参数
 
-# --- 中文翻译字典 (V8 修订版) ---
-
-# 'info' 数据的列标题 (Column Headers)
-INFO_COL_TRANSLATIONS = {
+# --- 中文翻译字典 (V12 修订版) ---
+# ... (V11 的所有翻译保持不变) ...
     'address1': '地址1',
     'address2': '地址2',
     'city': '城市',
@@ -132,10 +131,14 @@ INFO_COL_TRANSLATIONS = {
     'regularMarketPrice': '正常市价格',
     'regularMarketTime': '正常市时间',
     'trailingPegRatio': '追踪市盈增长率',
+    
+    # --- V12 新增 ---
+    'quantScore': '量化分数'
 }
 
 # 'recommendations' 数据的列标题 (Column Headers)
 REC_COL_TRANSLATIONS = {
+    # ... (V11 的所有翻译保持不变) ...
     'period': '周期',
     'strongBuy': '强烈买入',
     'buy': '买入',
@@ -150,6 +153,7 @@ REC_COL_TRANSLATIONS = {
 
 # 'financials', 'balance_sheet', 'cashflow' 数据的行索引 (Row Index)
 FINANCIALS_ROW_TRANSLATIONS = {
+    # ... (V11 的所有翻译保持不变) ...
     # 利润表 (Income Statement)
     'Total Revenue': '总营收(财报)',
     'Cost Of Revenue': '营收成本',
@@ -244,12 +248,68 @@ ALL_TRANSLATIONS = {
 }
 # --- 翻译字典结束 ---
 
+# --- V12 新增：量化打分函数 ---
+def calculate_quant_score(data):
+    """
+    根据传入的股票数据字典，计算一个量化分数。
+    这是一个示例模型，您可以根据自己的策略修改这里的“10个数值”和逻辑。
+    """
+    score = 0
+    
+    # --- 1. 估值指标 (越低越好) ---
+    pe = data.get('trailingPE')
+    pb = data.get('priceToBook')
+    
+    # 市盈率 (PE)
+    if pe is not None and 0 < pe < 20:
+        score += 1
+    if pe is not None and 0 < pe < 12: # 低于12分，再加1分
+        score += 1
+        
+    # 市净率 (PB)
+    if pb is not None and 0 < pb < 2.0:
+        score += 1
+    if pb is not None and 0 < pb < 1.2: # 低于1.2分，再加1分
+        score += 1
+
+    # --- 2. 盈利能力指标 (越高越好) ---
+    roe = data.get('returnOnEquity')
+    profit_margin = data.get('profitMargins') # 注意：yfinance 的值是 0.1 这种
+    
+    # 净资产收益率 (ROE)
+    if roe is not None and roe > 0.10: # 大于 10%
+        score += 1
+    if roe is not None and roe > 0.15: # 大于 15%
+        score += 2 # 优质指标，多加分
+
+    # 净利润率
+    if profit_margin is not None and profit_margin > 0.10: # 大于 10%
+        score += 1
+        
+    # --- 3. 财务健康 (债务越低越好) ---
+    de = data.get('debtToEquity')
+    
+    # 债转股 (Debt/Equity)
+    if de is not None and 0 < de < 100: # yfinance 的 D/E 单位是百分比
+        score += 1 # 债务低于净资产
+        
+    # --- 4. 股息 (越高越好) ---
+    dy = data.get('dividendYield') # yfinance 的值是 0.05 这种
+    
+    if dy is not None and dy > 0.03: # 股息率大于 3%
+        score += 1
+    if dy is not None and dy > 0.05: # 股息率大于 5%
+        score += 1
+        
+    # 最终总分 (满分 10 分)
+    return score
+# --- V12 结束 ---
+
 
 def process_ticker(ticker_symbol):
     """
     为单个股票代码获取所有数据。
-    被多线程执行器(ThreadPoolExecutor)调用。
-    (V10: 优化 - 使用 'info' 作为验证，无效则立即跳过)
+    (V12: 增加量化打分)
     """
     
     combined_data = {'symbol': ticker_symbol}
@@ -278,7 +338,7 @@ def process_ticker(ticker_symbol):
 
         # --- 只有 Info 成功后 (代码有效)，才执行以下操作 ---
     
-        # 2. 获取 Financials (只保留最近一个财年)
+        # 2. 获取 Financials
         try:
             fin = ticker.financials
             if not fin.empty:
@@ -289,7 +349,7 @@ def process_ticker(ticker_symbol):
         except Exception:
             pass 
             
-        # 3. 获取 Balance Sheet (只保留最近一个财年)
+        # 3. 获取 Balance Sheet
         try:
             bal = ticker.balance_sheet
             if not bal.empty:
@@ -300,7 +360,7 @@ def process_ticker(ticker_symbol):
         except Exception:
             pass 
 
-        # 4. 获取 Cashflow (只保留最近一个财年)
+        # 4. 获取 Cashflow
         try:
             cf = ticker.cashflow
             if not cf.empty:
@@ -311,7 +371,7 @@ def process_ticker(ticker_symbol):
         except Exception:
             pass 
             
-        # 5. 获取 Recommendations (只保留最新一条评级)
+        # 5. 获取 Recommendations
         try:
             rec = ticker.recommendations
             if not rec.empty:
@@ -322,10 +382,19 @@ def process_ticker(ticker_symbol):
         except Exception:
             pass 
 
-        # --- V9 修复: 增加“礼貌的”随机延迟 ---
+        # --- V12 新增: 计算量化分数 ---
+        # 在所有数据都抓取完毕后，统一计算分数
+        try:
+            score = calculate_quant_score(combined_data)
+            combined_data['quantScore'] = score
+        except Exception as e:
+            print(f"  [警告] {ticker_symbol} 计算分数时出错: {e}")
+            combined_data['quantScore'] = None
+        # --- V12 结束 ---
+
+        # 增加“礼貌的”随机延迟
         sleep_time = random.uniform(1.0, 2.5)
         time.sleep(sleep_time)
-        # ------------------------------------
 
         return combined_data
         
@@ -339,22 +408,19 @@ i = 0
 
 def get_hk_stock_info_combined(tickers, output_filename="hk_stocks_info_combined.xlsx"):
     """
-    (V11 - 移除白名单)
+    (V12 - 增加量化打分)
     使用多线程并发获取指定港股列表的多种信息，
     将所有获取到的列合并到 Excel 的一个工作表中。
     """
     
-    global i # 声明使用全局变量 i
+    global i 
     
-    # --- V11: 移除了 IMPORTANT_KEYS 白名单 ---
-    # ---------------------------------------------------------
-
     all_combined_data = []
     total_tickers = len(tickers)
-    MAX_WORKERS = 2 
+    MAX_WORKERS = 10 
 
     print(f"开始并发获取 {total_tickers} 只股票的合并信息 (使用 {MAX_WORKERS} 个线程)...")
-    print("注意：V11版将保存所有获取到的列。")
+    print("注意：V12版将保存所有获取到的列 (包含量化分数)。")
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         future_to_ticker = {executor.submit(process_ticker, ticker): ticker for ticker in tickers}
@@ -377,25 +443,31 @@ def get_hk_stock_info_combined(tickers, output_filename="hk_stocks_info_combined
 
     try:
         if all_combined_data:
-            # V11: 直接使用 df_combined 进行后续操作
             df_combined = pd.DataFrame(all_combined_data)
             df_combined = df_combined.rename(columns=ALL_TRANSLATIONS)
             
-            # --- V11: 移除了白名单筛选步骤 ---
             print(f"已获取 {len(df_combined.columns)} 列数据，将全部保存。")
 
-            # --- 将 '代码' 列移动到第一位 ---
-            translated_symbol_col = INFO_COL_TRANSLATIONS.get('symbol', '代码')
-            if translated_symbol_col in df_combined.columns:
-                # V11: 在 df_combined 上操作
-                cols = list(df_combined.columns)
+            # --- V12 修改: 将 '代码' 和 '量化分数' 列移动到第一、二位 ---
+            translated_symbol_col = ALL_TRANSLATIONS.get('symbol', '代码')
+            translated_score_col = ALL_TRANSLATIONS.get('quantScore', '量化分数')
+
+            cols = list(df_combined.columns)
+            
+            # 移动 '量化分数'
+            if translated_score_col in cols:
+                cols.insert(0, cols.pop(cols.index(translated_score_col)))
+            
+            # 移动 '代码'
+            if translated_symbol_col in cols:
                 cols.insert(0, cols.pop(cols.index(translated_symbol_col)))
-                df_combined = df_combined[cols]
             else:
-                print("[警告] 未找到 '代码' 列，无法将其移动到第一位。")
+                print("[警告] 未找到 '代码' 列。")
+                
+            df_combined = df_combined[cols]
+            # --- V12 结束 ---
             
             # --- 保存到 Excel ---
-            # V11: 保存 df_combined 并修改 sheet_name
             df_combined.to_excel(output_filename, sheet_name='全部信息', index=False)
             print(f"\n成功将全部数据保存到 {output_filename}")
         else:
@@ -416,8 +488,20 @@ if __name__ == "__main__":
     # --- 自动生成 0001.HK 到 5000.HK 的列表 (您可以按需修改范围) ---
     hk_ticker_list = generate_ticker_list(1, 5000)
     
-    # --- 根据当前时间生成文件名 ---
-    timestamp = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
-    output_filename = f"{timestamp}.xlsx"
+    # --- (V13.1 修复) ---
+    # 检查是否从 GitHub Actions (main.yml) 传入了文件名参数
+    
+    if len(sys.argv) > 1:
+        # 如果传入了参数 (例如 'python script.py filename.xlsx')
+        # 则使用 main.yml 传入的文件名
+        output_filename = sys.argv[1]
+        print(f"检测到 GitHub Actions 传入文件名: {output_filename}")
+    else:
+        # 如果没有传入参数 (本地运行)
+        # 则使用旧方法，根据当前时间生成文件名
+        print("未检测到传入文件名，本地运行模式，自动生成文件名...")
+        timestamp = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
+        output_filename = f"{timestamp}.xlsx"
+    # --- (修复结束) ---
     
     get_hk_stock_info_combined(hk_ticker_list, output_filename=output_filename)
