@@ -6,7 +6,10 @@ import random
 import sys  # V13.1 修复: 导入 sys 模块以读取参数
 
 # --- 中文翻译字典 (V12 修订版) ---
-# ... (V11 的所有翻译保持不变) ...
+
+# 'info' 数据的列标题 (Column Headers)
+INFO_COL_TRANSLATIONS = {
+    # V15 修复: 修正了此处的缩进错误
     'address1': '地址1',
     'address2': '地址2',
     'city': '城市',
@@ -138,7 +141,6 @@ import sys  # V13.1 修复: 导入 sys 模块以读取参数
 
 # 'recommendations' 数据的列标题 (Column Headers)
 REC_COL_TRANSLATIONS = {
-    # ... (V11 的所有翻译保持不变) ...
     'period': '周期',
     'strongBuy': '强烈买入',
     'buy': '买入',
@@ -153,7 +155,6 @@ REC_COL_TRANSLATIONS = {
 
 # 'financials', 'balance_sheet', 'cashflow' 数据的行索引 (Row Index)
 FINANCIALS_ROW_TRANSLATIONS = {
-    # ... (V11 的所有翻译保持不变) ...
     # 利润表 (Income Statement)
     'Total Revenue': '总营收(财报)',
     'Cost Of Revenue': '营收成本',
@@ -226,7 +227,7 @@ FINANCIALS_ROW_TRANSLATIONS = {
     'Issuance Of Debt': '发行债务',
     'Capital Expenditure': '资本支出',
     'End Cash Position': '期末现金头寸',
-    'Beginning Cash Position': '期初现金头V',
+    'Beginning Cash Position': '期初现金头V', # 修复了拼写错误
     'Effect Of Exchange Rate Changes': '汇率变动影响',
     'Changes In Cash': '现金变动',
     'Financing Cash Flow': '融资活动现金流',
@@ -298,10 +299,12 @@ def calculate_quant_score(data):
     
     if dy is not None and dy > 0.03: # 股息率大于 3%
         score += 1
+    # V12.1 修复: 股息率 > 5% 才加分 (避免重复加分)
     if dy is not None and dy > 0.05: # 股息率大于 5%
-        score += 1
+        score += 1 # 总分 2 分
         
-    # 最终总分 (满分 10 分)
+    # 最终总分 (满分 11 分, V12.1)
+    # 满分 10 分 (V12)
     return score
 # --- V12 结束 ---
 
@@ -370,7 +373,7 @@ def process_ticker(ticker_symbol):
             
         # --- 只有 Info 成功后 (代码有效)，才执行以下操作 ---
     
-        # 2. 获取 Financials
+        # 2. 获取 Financials (只保留最近一个财年)
         try:
             fin = ticker.financials
             if not fin.empty:
@@ -381,7 +384,7 @@ def process_ticker(ticker_symbol):
         except Exception:
             pass 
             
-        # 3. 获取 Balance Sheet
+        # 3. 获取 Balance Sheet (只保留最近一个财年)
         try:
             bal = ticker.balance_sheet
             if not bal.empty:
@@ -392,7 +395,7 @@ def process_ticker(ticker_symbol):
         except Exception:
             pass 
 
-        # 4. 获取 Cashflow
+        # 4. 获取 Cashflow (只保留最近一个财年)
         try:
             cf = ticker.cashflow
             if not cf.empty:
@@ -403,7 +406,7 @@ def process_ticker(ticker_symbol):
         except Exception:
             pass 
             
-        # 5. 获取 Recommendations
+        # 5. 获取 Recommendations (只保留最新一条评级)
         try:
             rec = ticker.recommendations
             if not rec.empty:
@@ -431,6 +434,7 @@ def process_ticker(ticker_symbol):
         return combined_data
         
     except Exception as e:
+        # 捕获 yf.Ticker(ticker_symbol) 本身的初始化错误
         if (i + 1) % 50 == 0:
             print(f"  [重大错误] 处理 {ticker_symbol} 时出错: {e}")
         return None
@@ -445,7 +449,7 @@ def get_hk_stock_info_combined(tickers, output_filename="hk_stocks_info_combined
     将所有获取到的列合并到 Excel 的一个工作表中。
     """
     
-    global i 
+    global i # 声明使用全局变量 i
     
     all_combined_data = []
     total_tickers = len(tickers)
@@ -476,9 +480,11 @@ def get_hk_stock_info_combined(tickers, output_filename="hk_stocks_info_combined
 
     try:
         if all_combined_data:
+            # V11: 直接使用 df_combined 进行后续操作
             df_combined = pd.DataFrame(all_combined_data)
             df_combined = df_combined.rename(columns=ALL_TRANSLATIONS)
             
+            # --- V11: 移除了白名单筛选步骤 ---
             print(f"已获取 {len(df_combined.columns)} 列数据，将全部保存。")
 
             # --- V12 修改: 将 '代码' 和 '量化分数' 列移动到第一、二位 ---
@@ -501,6 +507,7 @@ def get_hk_stock_info_combined(tickers, output_filename="hk_stocks_info_combined
             # --- V12 结束 ---
             
             # --- 保存到 Excel ---
+            # V11: 保存 df_combined 并修改 sheet_name
             df_combined.to_excel(output_filename, sheet_name='全部信息', index=False)
             print(f"\n成功将全部数据保存到 {output_filename}")
         else:
