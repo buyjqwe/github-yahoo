@@ -53,7 +53,7 @@ jobs:
           echo "TAG_NAME=report-${TAG_NAME}" >> $GITHUB_ENV
 
           # C. 运行脚本，使用新文件名
-          python yfinance_fetcher_v12_scoring.py "${FILE_NAME}"
+          python yf251110.py "${FILE_NAME}"
           
       # 5. 创建 Release 并上传附件
       # (V13 修复: 切换到更稳定的 softprops/action-gh-release)
