@@ -1,83 +1,75 @@
-# -----------------------------------------------------------------
-# GitHub Actions 配置文件
-#
-# 必须将此文件放置在您代码库的 .github/workflows/ 文件夹下
-# 路径: .github/workflows/main.yml
-# (V12.1 - 更新：发布到 Release 页面)
-# -----------------------------------------------------------------
-
-name: '定时运行港股数据抓取'
+# V13 修复版: 修正 Release 权限问题
+name: 定时运行港股数据抓取
 
 on:
-  # 1. 允许您在 GitHub 网站的 "Actions" 页面手动点击 "Run workflow" 来运行
+  # 1. 允许手动触发
   workflow_dispatch:
-  
+
   # 2. 定时触发
   schedule:
     # 语法: 分 时 日 月 周 (UTC 时间)
-
+    # '0 */2 * * *' = 每 2 小时运行一次 (在 00:00, 02:00, 04:00... UTC)
     - cron: '0 */2 * * *'
 
 jobs:
-  run-yfinance-fetcher:
-    # 使用最新的 Ubuntu 服务器环境
+  build-and-release:
     runs-on: ubuntu-latest
-    
-    # 定义任务步骤
+
+    # --- (V13 修复) ---
+    # 授权 Actions 具有写入(write)权限，以便创建 Release
+    permissions:
+      contents: write
+    # --- (修复结束) ---
+
     steps:
-      # 第一步: 检出 (Checkout) 你的代码
-      - name: '检出代码'
+      # 1. 检出代码
+      - name: 1. 检出 (Checkout) 代码
         uses: actions/checkout@v4
 
-      # 第二步: 设置 Python 3.10 环境
-      - name: '设置 Python 3.10'
+      # 2. 设置 Python 环境
+      - name: 2. 设置 Python 3.10
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-          cache: 'pip' # 缓存依赖项，加快后续运行速度
+          cache: 'pip' # 缓存 pip 依赖
 
-      # 第三步: 安装 Python 依赖
-      - name: '安装依赖'
-        run: pip install -r requirements.txt
-
-      # 第四步: 运行你的 Python 脚本 (V12.1: 修正为 V12 脚本)
-      - name: '运行 yfinance 抓取脚本 (V12)'
-        run: python yf251110.py
-
-      # 第五步: 准备发布所需变量
-      # (a) 生成一个唯一的标签名, 例如 report-2025-11-10-08-00-00
-      # (b) 获取 Python 脚本生成的 .xlsx 文件名
-      - name: '准备发布所需变量'
-        id: vars
+      # 3. 安装 Python 库
+      - name: 3. 安装依赖库
         run: |
-          echo "tag=report-$(date +'%Y-%m-%d-%H-%M-%S')" >> $GITHUB_OUTPUT
-          echo "filename=$(ls ./*.xlsx)" >> $GITHUB_OUTPUT
+          pip install -r requirements.txt
+          
+      # 4. 运行 Python 脚本
+      - name: 4. 运行 V12 打分脚本
+        run: |
+          # A. 生成文件名和 Tag 名
+          # 使用 "Asia/Shanghai" 时区，确保日期正确
+          TIMESTAMP_SHANGHAI=$(TZ="Asia/Shanghai" date +'%Y-%m-%d_%H-%M-%S')
+          TAG_NAME=$(TZ="Asia/Shanghai" date +'%Y-%m-%d-%H%M')
+          
+          FILE_NAME="${TIMESTAMP_SHANGHAI}.xlsx"
+          
+          # B. 将变量导出到 GitHub 环境
+          echo "FILE_NAME=${FILE_NAME}" >> $GITHUB_ENV
+          echo "TAG_NAME=report-${TAG_NAME}" >> $GITHUB_ENV
 
-      # 第六步: 创建 Release 并上传 Excel 文件 (替换原有的 upload-artifact)
-      # https://github.com/svenstaro/upload-release-action
-      - name: '创建 Release 并上传报告'
-        uses: svenstaro/upload-release-action@v2
+          # C. 运行脚本，使用新文件名
+          python yfinance_fetcher_v12_scoring.py "${FILE_NAME}"
+          
+      # 5. 创建 Release 并上传附件
+      # (V13 修复: 切换到更稳定的 softprops/action-gh-release)
+      - name: 5. 创建 Release 并上传附件
+        uses: softprops/action-gh-release@v1
         with:
-          # 仓库令牌，用于授权
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          
-          # 要上传的文件 (从上一步获取)
-          file: ${{ steps.vars.outputs.filename }}
-          
-          # Git 标签名 (例如: report-2025-11-10-08-00-00)
-          tag: ${{ steps.vars.outputs.tag }}
-          
+          # 使用 GITHUB_TOKEN
+          token: ${{ secrets.GITHUB_TOKEN }}
+          # 要上传的文件
+          files: ./${{ env.FILE_NAME }}
+          # Git 标签名
+          tag_name: ${{ env.TAG_NAME }}
           # Release 的标题
-          release_name: '港股数据报告 ${{ steps.vars.outputs.tag }}'
-          
+          name: 港股数据报告 ${{ env.TAG_NAME }}
           # Release 的描述
-          body: '这是由 GitHub Actions 自动生成的最新港股数据报告。'
-          
-          # 允许覆盖已有的同名标签 (以防万一)
-          overwrite: true 
-          
-          # 这不是一个草稿
+          body: "这是由 GitHub Actions 自动生成的最新港股数据报告。"
+          # 设置为非草稿、非预发布
           draft: false
-          
-          # 这不是一个预发布版
           prerelease: false
