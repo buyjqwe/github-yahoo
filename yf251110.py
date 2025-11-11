@@ -526,7 +526,7 @@ def generate_ticker_list(start=1, end=5000, suffix=".HK"):
 
 if __name__ == "__main__":
     # --- 自动生成 0001.HK 到 5000.HK 的列表 (您可以按需修改范围) ---
-    hk_ticker_list = generate_ticker_list(1, 5000)
+    hk_ticker_list = generate_ticker_list(1, 10)
     
     # --- (V13.1 修复) ---
     # 检查是否从 GitHub Actions (main.yml) 传入了文件名参数
