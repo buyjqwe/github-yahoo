@@ -16,7 +16,7 @@ on:
   schedule:
     # 语法: 分 时 日 月 周 (UTC 时间)
 
-    - cron: '0 */1 * * *'
+    - cron: '0 */2 * * *'
 
 jobs:
   run-yfinance-fetcher:
