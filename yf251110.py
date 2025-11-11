@@ -258,9 +258,14 @@ def calculate_quant_score(data):
     """
     score = 0
     
-    # 安全获取函数
+    # 安全获取函数 (V17 修复)
     def get_val(key):
-        return data.get(key)
+        val = data.get(key)
+        # 必须检查 val 是 int 或 float, 否则 "N/A" > 0 会导致 TypeError
+        if isinstance(val, (int, float)):
+            return val
+        # 如果 val 是 None, "N/A" 或其他非数字类型，则返回 None
+        return None
 
     try:
         # --- 1. 估值 (Valuation) (总分 200) ---
@@ -564,8 +569,7 @@ def get_hk_stock_info_combined(tickers, output_filename="hk_stocks_info_combined
     all_combined_data = []
     total_tickers = len(tickers)
     # (V14 修复) 降低并发数
-    MAX_WORKERS = 5 
-
+    MAX_WORKERS = 2
     print(f"开始并发获取 {total_tickers} 只股票的合并信息 (使用 {MAX_WORKERS} 个线程)...")
     print("注意：V14版将保存所有获取到的列 (包含量化分数和智能重试)。")
 
