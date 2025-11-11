@@ -309,7 +309,7 @@ def calculate_quant_score(data):
 def process_ticker(ticker_symbol):
     """
     为单个股票代码获取所有数据。
-    (V12: 增加量化打分)
+    (V14: 增加智能重试逻辑)
     """
     
     combined_data = {'symbol': ticker_symbol}
@@ -317,25 +317,57 @@ def process_ticker(ticker_symbol):
     try:
         ticker = yf.Ticker(ticker_symbol)
         
-        # 1. 获取 Info (核心验证步骤)
-        try:
-            info = ticker.info
-            
-            if (not info or 
-                info.get('symbol') != ticker_symbol or 
-                info.get('marketCap') is None): 
+        # --- (V14 修复: 智能重试) ---
+        MAX_RETRIES = 3
+        RETRY_DELAY = 30 # 429限速错误的基础等待时间 (秒)
+        
+        info = None
+        for attempt in range(MAX_RETRIES):
+            try:
+                info = ticker.info
+                # 成功获取，跳出重试循环
+                break 
                 
-                if (i + 1) % 50 == 0: 
-                     print(f"  [跳过] 股票代码 {ticker_symbol} 无效或无数据。")
-                return None 
-            
-            combined_data.update(info)
-            
-        except Exception as e:
-            if (i + 1) % 50 == 0:
-                print(f"  [跳过] 获取 {ticker_symbol} 'info' 时出错: {e}。")
-            return None 
+            except Exception as e:
+                error_str = str(e)
+                
+                if "Too Many Requests" in error_str or "Rate limited" in error_str:
+                    # 这是 429 限速错误
+                    wait_time = RETRY_DELAY * (attempt + 1)
+                    print(f"  [限速] {ticker_symbol} 第 {attempt + 1} 次尝试失败。等待 {wait_time} 秒...")
+                    time.sleep(wait_time) # 30s, 60s, 90s
+                
+                elif "404" in error_str or "Not Found" in error_str:
+                    # 这是 404 错误，重试无效
+                    if (i + 1) % 50 == 0:
+                        print(f"  [跳过 404] {ticker_symbol} 无数据。")
+                    return None # 立即跳出函数
+                
+                else:
+                    # 其他网络错误 (例如 503)，短暂重试
+                    if (i + 1) % 50 == 0:
+                         print(f"  [跳过] 获取 {ticker_symbol} 'info' 时出错: {e}。")
+                    if attempt == MAX_RETRIES - 1: # 最后一次尝试失败
+                        return None
+                    time.sleep(5) # 短暂等待5秒
 
+        # 检查重试循环是否成功
+        if not info:
+            print(f"  [失败] {ticker_symbol} 在 {MAX_RETRIES} 次尝试后 'info' 仍失败。")
+            return None
+        # --- (V14 修复结束) ---
+
+        # 检查 'info' 内容是否有效
+        if (not info or 
+            info.get('symbol') != ticker_symbol or 
+            info.get('marketCap') is None): 
+            
+            if (i + 1) % 50 == 0: 
+                 print(f"  [跳过] 股票代码 {ticker_symbol} 无效或无数据。")
+            return None 
+        
+        combined_data.update(info)
+            
         # --- 只有 Info 成功后 (代码有效)，才执行以下操作 ---
     
         # 2. 获取 Financials
@@ -392,8 +424,8 @@ def process_ticker(ticker_symbol):
             combined_data['quantScore'] = None
         # --- V12 结束 ---
 
-        # 增加“礼貌的”随机延迟
-        sleep_time = random.uniform(1.0, 2.5)
+        # (V14 修复) 增加基础延迟
+        sleep_time = random.uniform(2.0, 4.0)
         time.sleep(sleep_time)
 
         return combined_data
@@ -408,7 +440,7 @@ i = 0
 
 def get_hk_stock_info_combined(tickers, output_filename="hk_stocks_info_combined.xlsx"):
     """
-    (V12 - 增加量化打分)
+    (V14 - 增加智能重试)
     使用多线程并发获取指定港股列表的多种信息，
     将所有获取到的列合并到 Excel 的一个工作表中。
     """
@@ -417,10 +449,11 @@ def get_hk_stock_info_combined(tickers, output_filename="hk_stocks_info_combined
     
     all_combined_data = []
     total_tickers = len(tickers)
-    MAX_WORKERS = 10 
+    # (V14 修复) 降低并发数
+    MAX_WORKERS = 5 
 
     print(f"开始并发获取 {total_tickers} 只股票的合并信息 (使用 {MAX_WORKERS} 个线程)...")
-    print("注意：V12版将保存所有获取到的列 (包含量化分数)。")
+    print("注意：V14版将保存所有获取到的列 (包含量化分数和智能重试)。")
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         future_to_ticker = {executor.submit(process_ticker, ticker): ticker for ticker in tickers}
