@@ -250,62 +250,172 @@ ALL_TRANSLATIONS = {
 # --- 翻译字典结束 ---
 
 # --- V12 新增：量化打分函数 ---
+# V16 重构: 1000分制，20项指标
 def calculate_quant_score(data):
     """
-    根据传入的股票数据字典，计算一个量化分数。
-    这是一个示例模型，您可以根据自己的策略修改这里的“10个数值”和逻辑。
+    (V16) 根据传入的股票数据字典，计算一个量化分数 (总分 1000)。
+    综合 20 项指标，涵盖估值、盈利、健康、股息和市场五个维度。
     """
     score = 0
     
-    # --- 1. 估值指标 (越低越好) ---
-    pe = data.get('trailingPE')
-    pb = data.get('priceToBook')
-    
-    # 市盈率 (PE)
-    if pe is not None and 0 < pe < 20:
-        score += 1
-    if pe is not None and 0 < pe < 12: # 低于12分，再加1分
-        score += 1
-        
-    # 市净率 (PB)
-    if pb is not None and 0 < pb < 2.0:
-        score += 1
-    if pb is not None and 0 < pb < 1.2: # 低于1.2分，再加1分
-        score += 1
+    # 安全获取函数
+    def get_val(key):
+        return data.get(key)
 
-    # --- 2. 盈利能力指标 (越高越好) ---
-    roe = data.get('returnOnEquity')
-    profit_margin = data.get('profitMargins') # 注意：yfinance 的值是 0.1 这种
-    
-    # 净资产收益率 (ROE)
-    if roe is not None and roe > 0.10: # 大于 10%
-        score += 1
-    if roe is not None and roe > 0.15: # 大于 15%
-        score += 2 # 优质指标，多加分
+    try:
+        # --- 1. 估值 (Valuation) (总分 200) ---
+        pe = get_val('trailingPE')
+        pb = get_val('priceToBook')
+        fwd_pe = get_val('forwardPE')
+        
+        # 指标 1: 市盈率 (PE) (80分)
+        if pe is not None and pe > 0:
+            if pe < 10: score += 80
+            elif pe < 15: score += 60
+            elif pe < 20: score += 40
+            elif pe < 30: score += 20
+            else: score += 5
 
-    # 净利润率
-    if profit_margin is not None and profit_margin > 0.10: # 大于 10%
-        score += 1
+        # 指标 2: 市净率 (PB) (80分)
+        if pb is not None and pb > 0:
+            if pb < 1.0: score += 80
+            elif pb < 1.5: score += 60
+            elif pb < 2.0: score += 40
+            elif pb < 3.0: score += 20
         
-    # --- 3. 财务健康 (债务越低越好) ---
-    de = data.get('debtToEquity')
+        # 指标 3: 远期 PE 优于 TTM PE (40分)
+        if (fwd_pe is not None and pe is not None and 
+            fwd_pe > 0 and fwd_pe < pe):
+            score += 40 # 预期盈利增长
+
+        # --- 2. 盈利能力 (Profitability) (总分 300) ---
+        roe = get_val('returnOnEquity')
+        profit_margin = get_val('profitMargins')
+        op_margin = get_val('operatingMargins')
+        rev_growth = get_val('revenueGrowth')
+        earn_growth = get_val('earningsGrowth')
+        
+        # 指标 4: 净资产收益率 (ROE) (100分)
+        if roe is not None:
+            if roe > 0.20: score += 100
+            elif roe > 0.15: score += 70
+            elif roe > 0.10: score += 40
+            elif roe > 0: score += 10
+            
+        # 指标 5: 净利润率 (Profit Margin) (80分)
+        if profit_margin is not None:
+            if profit_margin > 0.20: score += 80
+            elif profit_margin > 0.15: score += 60
+            elif profit_margin > 0.10: score += 40
+            elif profit_margin > 0: score += 10
+
+        # 指标 6: 营业利润率 (Operating Margin) (60分)
+        if op_margin is not None:
+            if op_margin > 0.20: score += 60
+            elif op_margin > 0.15: score += 40
+            elif op_margin > 0.10: score += 20
+            elif op_margin > 0: score += 5
+            
+        # 指标 7: 营收增长 (Revenue Growth) (30分)
+        if rev_growth is not None:
+            if rev_growth > 0.10: score += 30
+            elif rev_growth > 0.05: score += 20
+            elif rev_growth > 0: score += 10
+            
+        # 指标 8: 盈利增长 (Earnings Growth) (30分)
+        if earn_growth is not None:
+            if earn_growth > 0.10: score += 30
+            elif earn_growth > 0.05: score += 20
+            elif earn_growth > 0: score += 10
+
+        # --- 3. 财务健康 (Financial Health) (总分 300) ---
+        de_ratio = get_val('debtToEquity')
+        curr_ratio = get_val('currentRatio')
+        quick_ratio = get_val('quickRatio')
+        op_cf = get_val('operatingCashflow') # 来自 info
+        free_cf = get_val('freeCashflow') # 来自 info
+        net_income = get_val('Net Income') # 来自财报
+        
+        # 指标 9: 债转股 (D/E Ratio) (80分) (越低越好)
+        if de_ratio is not None:
+            if de_ratio < 30: score += 80
+            elif de_ratio < 60: score += 60
+            elif de_ratio < 100: score += 40
+            elif de_ratio < 150: score += 20
+
+        # 指标 10: 流动比率 (Current Ratio) (60分)
+        if curr_ratio is not None:
+            if curr_ratio > 2.0: score += 60
+            elif curr_ratio > 1.5: score += 40
+            elif curr_ratio > 1.0: score += 20
+            
+        # 指标 11: 速动比率 (Quick Ratio) (60分)
+        if quick_ratio is not None:
+            if quick_ratio > 1.2: score += 60
+            elif quick_ratio > 1.0: score += 40
+            elif quick_ratio > 0.8: score += 20
+            
+        # 指标 12: 经营现金流 (OCF) (50分)
+        if op_cf is not None and net_income is not None:
+            if op_cf > net_income: score += 50 # 优于净利润
+            elif op_cf > 0: score += 20
+        elif op_cf is not None and op_cf > 0:
+            score += 20 # 备用检查
+            
+        # 指标 13: 自由现金流 (Free Cash Flow) (50分)
+        if free_cf is not None and free_cf > 0:
+            score += 50
+
+        # --- 4. 股息与回报 (Dividends & Returns) (总分 100) ---
+        dy_yield = get_val('dividendYield')
+        payout = get_val('payoutRatio')
+        
+        # 指标 14: 股息率 (Dividend Yield) (50分)
+        if dy_yield is not None:
+            if dy_yield > 0.05: score += 50
+            elif dy_yield > 0.03: score += 30
+            elif dy_yield > 0.01: score += 10
+            
+        # 指标 15: 派息比率 (Payout Ratio) (50分)
+        if payout is not None:
+            if 0 < payout < 0.6: score += 50 # 健康可持续
+            elif 0.6 <= payout < 0.9: score += 20 # 偏高
+            # (如果 payout <= 0 或 >= 0.9，则为 0 分)
+
+        # --- 5. 市场与分析师 (Market & Analysts) (总分 100) ---
+        rec_key = get_val('recommendationKey')
+        inst_hold = get_val('heldPercentInstitutions')
+        insider_hold = get_val('heldPercentInsiders')
+        target_mean = get_val('targetMeanPrice')
+        current_price = get_val('currentPrice')
+        
+        # 指标 16: 分析师建议 (40分)
+        if rec_key is not None:
+            if rec_key == 'strong_buy': score += 40
+            elif rec_key == 'buy': score += 30
+            elif rec_key == 'hold': score += 15
+        
+        # 指标 17: 机构持股 (20分)
+        if inst_hold is not None:
+            if inst_hold > 0.6: score += 20
+            elif inst_hold > 0.4: score += 10
+            
+        # 指标 18: 内部人士持股 (20分)
+        if insider_hold is not None:
+            if insider_hold > 0.1: score += 20
+            elif insider_hold > 0.05: score += 10
+            
+        # 指标 19 & 20: 目标均价 (20分)
+        if target_mean is not None and current_price is not None and current_price > 0:
+            if target_mean > (current_price * 1.1): # 至少 10% 上涨空间
+                score += 20
+        
+        return int(score) # 返回整数分数
     
-    # 债转股 (Debt/Equity)
-    if de is not None and 0 < de < 100: # yfinance 的 D/E 单位是百分比
-        score += 1 # 债务低于净资产
-        
-    # --- 4. 股息 (越高越好) ---
-    dy = data.get('dividendYield') # yfinance 的值是 0.05 这种
-    
-    if dy is not None and dy > 0.03: # 股息率大于 3%
-        score += 1
-    # V12.1 修复: 股息率 > 5% 才加分 (避免重复加分)
-    if dy is not None and dy > 0.05: # 股息率大于 5%
-        score += 1 # 总分 2 分
-        
-    # 最终总分 (满分 11 分, V12.1)
-    # 满分 10 分 (V12)
-    return score
+    except Exception as e:
+        print(f"  [警告] 计算分数时出错: {e}")
+        return 0 # 出错则返回 0 分
+
 # --- V12 结束 ---
 
 
@@ -424,7 +534,7 @@ def process_ticker(ticker_symbol):
             combined_data['quantScore'] = score
         except Exception as e:
             print(f"  [警告] {ticker_symbol} 计算分数时出错: {e}")
-            combined_data['quantScore'] = None
+            combined_data['quantScore'] = 0 # V16 修复: 出错时给 0 分
         # --- V12 结束 ---
 
         # (V14 修复) 增加基础延迟
@@ -526,7 +636,7 @@ def generate_ticker_list(start=1, end=5000, suffix=".HK"):
 
 if __name__ == "__main__":
     # --- 自动生成 0001.HK 到 5000.HK 的列表 (您可以按需修改范围) ---
-    hk_ticker_list = generate_ticker_list(1, 10)
+    hk_ticker_list = generate_ticker_list(1, 5000)
     
     # --- (V13.1 修复) ---
     # 检查是否从 GitHub Actions (main.yml) 传入了文件名参数
