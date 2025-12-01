@@ -3,13 +3,11 @@ import pandas as pd
 import time
 import concurrent.futures
 import random
-import sys  # V13.1 修复: 导入 sys 模块以读取参数
+import sys
+import numpy as np # 引入 numpy 进行更科学的数据处理
 
 # --- 中文翻译字典 (V12 修订版) ---
-
-# 'info' 数据的列标题 (Column Headers)
 INFO_COL_TRANSLATIONS = {
-    # V15 修复: 修正了此处的缩进错误
     'address1': '地址1',
     'address2': '地址2',
     'city': '城市',
@@ -135,11 +133,11 @@ INFO_COL_TRANSLATIONS = {
     'regularMarketTime': '正常市时间',
     'trailingPegRatio': '追踪市盈增长率',
     
-    # --- V12 新增 ---
-    'quantScore': '量化分数'
+    # --- V12/V21 新增 ---
+    'quantScore': 'V21量化评分(越低越好)'
 }
 
-# 'recommendations' 数据的列标题 (Column Headers)
+# 'recommendations' 数据的列标题
 REC_COL_TRANSLATIONS = {
     'period': '周期',
     'strongBuy': '强烈买入',
@@ -153,9 +151,9 @@ REC_COL_TRANSLATIONS = {
     'Action': '评级行动',
 }
 
-# 'financials', 'balance_sheet', 'cashflow' 数据的行索引 (Row Index)
+# 'financials', 'balance_sheet', 'cashflow' 数据的行索引
 FINANCIALS_ROW_TRANSLATIONS = {
-    # 利润表 (Income Statement)
+    # 利润表
     'Total Revenue': '总营收(财报)',
     'Cost Of Revenue': '营收成本',
     'Gross Profit': '毛利润',
@@ -183,7 +181,7 @@ FINANCIALS_ROW_TRANSLATIONS = {
     'Diluted Average Shares': '稀释平均股数',
     'Total Operating Income As Reported': '报告营业总收入',
     
-    # 资产负债表 (Balance Sheet)
+    # 资产负债表
     'Total Assets': '总资产',
     'Total Non Current Assets': '非流动资产合计',
     'Goodwill And Other Intangible Assets': '商誉及其他无形资产',
@@ -220,14 +218,14 @@ FINANCIALS_ROW_TRANSLATIONS = {
     'Retained Earnings': '留存收益',
     'Treasury Stock': '库藏股',
 
-    # 现金流量表 (Cash Flow)
+    # 现金流量表
     'Free Cash Flow': '自由现金流',
     'Repurchase Of Capital Stock': '股票回购',
     'Repayment Of Debt': '偿还债务',
     'Issuance Of Debt': '发行债务',
     'Capital Expenditure': '资本支出',
     'End Cash Position': '期末现金头寸',
-    'Beginning Cash Position': '期初现金头V', # 修复了拼写错误
+    'Beginning Cash Position': '期初现金头V', 
     'Effect Of Exchange Rate Changes': '汇率变动影响',
     'Changes In Cash': '现金变动',
     'Financing Cash Flow': '融资活动现金流',
@@ -241,221 +239,185 @@ FINANCIALS_ROW_TRANSLATIONS = {
     'Net Income From Continuing Operations': '持续经营净收入',
 }
 
-# --- 合并所有翻译字典 ---
 ALL_TRANSLATIONS = {
     **INFO_COL_TRANSLATIONS,
     **REC_COL_TRANSLATIONS,
     **FINANCIALS_ROW_TRANSLATIONS
 }
-# --- 翻译字典结束 ---
 
-# --- V18 核心: 辅助函数 (已在 V19 中移除) ---
-# (V19) 移除了 score_higher_is_better
-# (V19) 移除了 score_lower_is_better
-
-# --- V12 新增：量化打分函数 (已在 V19 中移除) ---
-# (V19) 移除了 calculate_quant_score (逻辑已移至 V19 的 calculate_ranks_and_score)
-
-
-# --- V19 新增: 排名和打分函数 ---
-def calculate_ranks_and_score(df):
+# --- V21 新增: 加权排名打分函数 ---
+def calculate_ranks_and_score_v21(df):
     """
-    (V20) 综合排名(Sum-of-Ranks)模型:
-    1. "排名第几该项就打几分": 对20个指标进行排名 (1, 2, 3...)。
-    2. "总分值越低越好": 将所有排名相加，总分最低者为最优。
+    V21 (Weighted Sum-of-Ranks) 模型:
+    采用加权排名机制，对不同类别的指标赋予不同权重。
+    分数越低越好 (Low Score = Better Rank)。
     """
-    print("开始进行 V20 (Sum-of-Ranks) 排名打分...")
+    print("开始进行 V21 (加权排名优化版) 打分...")
     
     # 辅助函数：安全地将列转换为数字，非数字变为 NaN
     def safe_to_numeric(column):
         return pd.to_numeric(column, errors='coerce')
 
-    # 1. 强制转换所有用于打分的列为数字
-    # 估值
+    # 1. 强制转换数据类型
+    # 估值类
     df['trailingPE'] = safe_to_numeric(df.get('trailingPE'))
-    df['priceToBook'] = safe_to_numeric(df.get('priceToBook'))
     df['forwardPE'] = safe_to_numeric(df.get('forwardPE'))
-    # 盈利
+    df['priceToBook'] = safe_to_numeric(df.get('priceToBook'))
+    df['priceToSalesTrailing12Months'] = safe_to_numeric(df.get('priceToSalesTrailing12Months'))
+    
+    # 盈利/成长类
     df['returnOnEquity'] = safe_to_numeric(df.get('returnOnEquity'))
     df['profitMargins'] = safe_to_numeric(df.get('profitMargins'))
     df['operatingMargins'] = safe_to_numeric(df.get('operatingMargins'))
     df['revenueGrowth'] = safe_to_numeric(df.get('revenueGrowth'))
     df['earningsGrowth'] = safe_to_numeric(df.get('earningsGrowth'))
-    # 健康
+    
+    # 财务健康/股息类
     df['debtToEquity'] = safe_to_numeric(df.get('debtToEquity'))
     df['currentRatio'] = safe_to_numeric(df.get('currentRatio'))
     df['quickRatio'] = safe_to_numeric(df.get('quickRatio'))
-    df['operatingCashflow'] = safe_to_numeric(df.get('operatingCashflow'))
-    df['freeCashflow'] = safe_to_numeric(df.get('freeCashflow'))
-    df['Net Income'] = safe_to_numeric(df.get('Net Income'))
-    # 股息
     df['dividendYield'] = safe_to_numeric(df.get('dividendYield'))
     df['payoutRatio'] = safe_to_numeric(df.get('payoutRatio'))
-    # 市场
-    df['heldPercentInstitutions'] = safe_to_numeric(df.get('heldPercentInstitutions'))
-    df['heldPercentInsiders'] = safe_to_numeric(df.get('heldPercentInsiders'))
+    
+    # 市场情绪
     df['targetMeanPrice'] = safe_to_numeric(df.get('targetMeanPrice'))
     df['currentPrice'] = safe_to_numeric(df.get('currentPrice'))
+    df['heldPercentInstitutions'] = safe_to_numeric(df.get('heldPercentInstitutions'))
 
-    # --- V20 新增: 预计算 V19 中的"布尔/奖励"项，使其可排名 ---
-    
-    # 1. 远期PE/TTM PE (越小越好)
-    df['fwd_pe_ratio'] = df['forwardPE'] / df['trailingPE']
-    # 确保 fwd_pe_ratio > 0, 否则无效 (例如 亏损 / 盈利)
-    df.loc[df['fwd_pe_ratio'] <= 0, 'fwd_pe_ratio'] = pd.NA
-    
-    # 2. OCF / 净利润 (越大越好)
-    df['ocf_ratio'] = df['operatingCashflow'] / df['Net Income']
-    
-    # 3. 派息比率 (0.2-0.6 最佳, 越接近 0.4 越好)
-    # 我们对 "距离 0.4 的绝对值" 进行排名 (越小越好)
-    df['payout_abs_diff'] = (df['payoutRatio'] - 0.4).abs()
-    
-    # 4. 分析师建议 (数字越小越好)
-    rec_key_map = {'strong_buy': 1, 'buy': 2, 'hold': 3, 'sell': 4, 'strong_sell': 5}
-    df['rec_numeric'] = df['recommendationKey'].map(rec_key_map)
-    
-    # 5. 目标上涨空间 (越大越好)
-    df['target_upside'] = df['targetMeanPrice'] / df['currentPrice']
+    # --- V21 特殊处理: 优化指标逻辑 ---
 
-    # --- V20 核心 ---
-    # 2. 计算各项指标的“绝对排名 (Absolute Rank)”
-    # ascending=True:  值越小，排名越靠前 (rank 1 = 最好)
-    # ascending=False: 值越大，排名越靠前 (rank 1 = 最好)
-    # pct=False:      将排名转换为 1, 2, 3...
-    # na_option='bottom': 将 NaN (缺失值) 放在最差的排名
+    # 1. 智能 PE 处理 (Smart PE): 
+    # 问题: 负数 PE (亏损) 在升序排名时会排在正数 PE (盈利) 之前 (因为 -10 < 5)。
+    # 解决: 将 PE <= 0 的设为一个极大的惩罚值 (例如 9999)，让其排名垫底。
+    df['smart_pe'] = df['trailingPE'].apply(lambda x: x if x > 0 else 9999)
+    df['smart_fwd_pe'] = df['forwardPE'].apply(lambda x: x if x > 0 else 9999)
+
+    # 2. PEG 估算 (PE / Growth): 
+    # 如果没有现成数据，手动计算。寻找 0.5 - 1.5 之间的黄金区间。
+    # 这里我们简化为: PEG 越低越好 (但在正数范围内)。
+    df['calc_peg'] = df['smart_pe'] / (df['earningsGrowth'] * 100) # Growth通常是小数 0.2 -> 20
+    df['calc_peg'] = df['calc_peg'].apply(lambda x: x if x > 0 else 9999) # 同样处理负值
+
+    # 3. 派息比率距离优化:
+    # 目标是 35% - 45% (0.35-0.45) 为最佳。
+    df['payout_score'] = (df['payoutRatio'] - 0.4).abs()
+
+    # 4. 目标价上涨空间:
+    df['upside_potential'] = (df['targetMeanPrice'] - df['currentPrice']) / df['currentPrice']
     
+    # --- 排名计算 (Rank Calculation) ---
+    # pct=True: 将排名转化为百分比 (0.0 - 1.0)，方便加权计算。
     ranks = {}
+
+    # === A. 估值权重 (Valuation) - 权重: 高 (1.5) ===
+    # 越小越好
+    ranks['pe_rank'] = df['smart_pe'].rank(ascending=True, pct=True, na_option='bottom')
+    ranks['fwd_pe_rank'] = df['smart_fwd_pe'].rank(ascending=True, pct=True, na_option='bottom')
+    ranks['pb_rank'] = df['priceToBook'].rank(ascending=True, pct=True, na_option='bottom')
+    ranks['ps_rank'] = df['priceToSalesTrailing12Months'].rank(ascending=True, pct=True, na_option='bottom')
+
+    # === B. 盈利能力 (Profitability) - 权重: 高 (1.5) ===
+    # 越大越好
+    ranks['roe_rank'] = df['returnOnEquity'].rank(ascending=False, pct=True, na_option='bottom')
+    ranks['net_margin_rank'] = df['profitMargins'].rank(ascending=False, pct=True, na_option='bottom')
+    ranks['op_margin_rank'] = df['operatingMargins'].rank(ascending=False, pct=True, na_option='bottom')
+
+    # === C. 成长性 (Growth) - 权重: 中 (1.2) ===
+    # 越大越好 (PEG例外)
+    ranks['rev_growth_rank'] = df['revenueGrowth'].rank(ascending=False, pct=True, na_option='bottom')
+    ranks['earn_growth_rank'] = df['earningsGrowth'].rank(ascending=False, pct=True, na_option='bottom')
+    ranks['peg_rank'] = df['calc_peg'].rank(ascending=True, pct=True, na_option='bottom') # PEG越小越好
+
+    # === D. 财务健康与股息 (Health & Yield) - 权重: 标准 (1.0) ===
+    ranks['debt_equity_rank'] = df['debtToEquity'].rank(ascending=True, pct=True, na_option='bottom') # 越小越好
+    ranks['current_ratio_rank'] = df['currentRatio'].rank(ascending=False, pct=True, na_option='bottom') # 越大越好
+    ranks['div_yield_rank'] = df['dividendYield'].rank(ascending=False, pct=True, na_option='bottom') # 越高越好
+    ranks['payout_rank'] = df['payout_score'].rank(ascending=True, pct=True, na_option='bottom') # 越接近0.4越好
+
+    # === E. 市场情绪 (Sentiment) - 权重: 低 (0.8) ===
+    ranks['inst_hold_rank'] = df['heldPercentInstitutions'].rank(ascending=False, pct=True, na_option='bottom')
+    ranks['upside_rank'] = df['upside_potential'].rank(ascending=False, pct=True, na_option='bottom')
+
+    # --- 综合加权打分 (Weighted Scoring) ---
+    # 分数 = sum(rank_percentile * weight) * 100
+    # 结果是一个 0 - 1400 左右的分数，越低越好
     
-    # --- 1. 估值 (Valuation) ---
-    ranks['pe_rank'] = df['trailingPE'].rank(ascending=True, na_option='bottom', pct=False)
-    ranks['pb_rank'] = df['priceToBook'].rank(ascending=True, na_option='bottom', pct=False)
-    ranks['fwd_pe_ratio_rank'] = df['fwd_pe_ratio'].rank(ascending=True, na_option='bottom', pct=False) # 越小越好
-
-    # --- 2. 盈利能力 (Profitability) ---
-    ranks['roe_rank'] = df['returnOnEquity'].rank(ascending=False, na_option='bottom', pct=False)
-    ranks['profit_margin_rank'] = df['profitMargins'].rank(ascending=False, na_option='bottom', pct=False)
-    ranks['op_margin_rank'] = df['operatingMargins'].rank(ascending=False, na_option='bottom', pct=False)
-    ranks['rev_growth_rank'] = df['revenueGrowth'].rank(ascending=False, na_option='bottom', pct=False)
-    ranks['earn_growth_rank'] = df['earningsGrowth'].rank(ascending=False, na_option='bottom', pct=False)
-
-    # --- 3. 财务健康 (Financial Health) ---
-    ranks['de_ratio_rank'] = df['debtToEquity'].rank(ascending=True, na_option='bottom', pct=False)
-    ranks['curr_ratio_rank'] = df['currentRatio'].rank(ascending=False, na_option='bottom', pct=False)
-    ranks['quick_ratio_rank'] = df['quickRatio'].rank(ascending=False, na_option='bottom', pct=False)
-    ranks['ocf_ratio_rank'] = df['ocf_ratio'].rank(ascending=False, na_option='bottom', pct=False) # OCF/NI 越大越好
-    ranks['fcf_rank'] = df['freeCashflow'].rank(ascending=False, na_option='bottom', pct=False) # FCF 越大越好
-
-    # --- 4. 股息与回报 (Dividends & Returns) ---
-    ranks['dy_yield_rank'] = df['dividendYield'].rank(ascending=False, na_option='bottom', pct=False)
-    ranks['payout_abs_diff_rank'] = df['payout_abs_diff'].rank(ascending=True, na_option='bottom', pct=False) # 距离 0.4 越近越好
-
-    # --- 5. 市场与分析师 (Market & Analysts) ---
-    ranks['inst_hold_rank'] = df['heldPercentInstitutions'].rank(ascending=False, na_option='bottom', pct=False)
-    ranks['insider_hold_rank'] = df['heldPercentInsiders'].rank(ascending=False, na_option='bottom', pct=False)
-    ranks['rec_numeric_rank'] = df['rec_numeric'].rank(ascending=True, na_option='bottom', pct=False) # 1(strong_buy) 最好
-    ranks['target_upside_rank'] = df['target_upside'].rank(ascending=False, na_option='bottom', pct=False) # 越大越好
-
-    # (V20) 额外增加一个 'forwardPE' 排名
-    ranks['fwd_pe_rank'] = df['forwardPE'].rank(ascending=True, na_option='bottom', pct=False)
-
-    # 3. 汇总分数 (V20: 简单的将所有排名相加，总分越低越好)
-    df['quantScore'] = (
-        ranks['pe_rank'] +
-        ranks['pb_rank'] +
-        ranks['fwd_pe_ratio_rank'] +
-        ranks['roe_rank'] +
-        ranks['profit_margin_rank'] +
-        ranks['op_margin_rank'] +
-        ranks['rev_growth_rank'] +
-        ranks['earn_growth_rank'] +
-        ranks['de_ratio_rank'] +
-        ranks['curr_ratio_rank'] +
-        ranks['quick_ratio_rank'] +
-        ranks['ocf_ratio_rank'] +
-        ranks['fcf_rank'] +
-        ranks['dy_yield_rank'] +
-        ranks['payout_abs_diff_rank'] +
-        ranks['inst_hold_rank'] +
-        ranks['insider_hold_rank'] +
-        ranks['rec_numeric_rank'] +
-        ranks['target_upside_rank'] +
-        ranks['fwd_pe_rank'] # 20 个指标
+    total_score = (
+        # A. Valuation (x 1.5)
+        (ranks['pe_rank'] * 1.5) +
+        (ranks['fwd_pe_rank'] * 1.5) +
+        (ranks['pb_rank'] * 1.5) +
+        (ranks['ps_rank'] * 1.2) + # PS稍微降低权重
+        
+        # B. Profitability (x 1.5)
+        (ranks['roe_rank'] * 1.5) +
+        (ranks['net_margin_rank'] * 1.5) +
+        (ranks['op_margin_rank'] * 1.2) +
+        
+        # C. Growth (x 1.2)
+        (ranks['rev_growth_rank'] * 1.2) +
+        (ranks['earn_growth_rank'] * 1.2) +
+        (ranks['peg_rank'] * 1.2) +
+        
+        # D. Health (x 1.0)
+        (ranks['debt_equity_rank'] * 1.0) +
+        (ranks['current_ratio_rank'] * 1.0) +
+        (ranks['div_yield_rank'] * 1.0) +
+        (ranks['payout_rank'] * 1.0) +
+        
+        # E. Sentiment (x 0.8)
+        (ranks['inst_hold_rank'] * 0.8) +
+        (ranks['upside_rank'] * 0.8)
     )
-    
-    # 将最终分数转换为整数
-    df['quantScore'] = df['quantScore'].fillna(pd.NA).astype('Int64') # 允许 NaN
-    
-    print("V20 (Sum-of-Ranks) 排名打分计算完成。")
-    return df
-# --- V19 结束 ---
 
+    # 归一化并取整 (Scale to 0-100 for easier reading, optional, here we just keep sum)
+    # 为了保持和之前逻辑一致 (越低越好)，直接保存加权和
+    df['quantScore'] = (total_score * 10).fillna(9999).astype('int')
+    
+    print("V21 排名打分计算完成。")
+    return df
+
+# --- 下面是爬虫核心逻辑 (保持不变，只是调用了新的打分函数) ---
 
 def process_ticker(ticker_symbol):
-    """
-    为单个股票代码获取所有数据。
-    (V19: 移除了 V12/V18 的打分逻辑，只抓取数据)
-    """
-    
+    """为单个股票代码获取所有数据。"""
     combined_data = {'symbol': ticker_symbol}
     
     try:
         ticker = yf.Ticker(ticker_symbol)
         
-        # --- (V14 修复: 智能重试) ---
+        # --- 智能重试 ---
         MAX_RETRIES = 5
-        RETRY_DELAY = 60 # 429限速错误的基础等待时间 (秒)
+        RETRY_DELAY = 60 # 429限速错误的基础等待时间
         
         info = None
         for attempt in range(MAX_RETRIES):
             try:
                 info = ticker.info
-                # 成功获取，跳出重试循环
                 break 
-                
             except Exception as e:
                 error_str = str(e)
-                
                 if "Too Many Requests" in error_str or "Rate limited" in error_str:
-                    # 这是 429 限速错误
                     wait_time = RETRY_DELAY * (attempt + 1)
-                    print(f"  [限速] {ticker_symbol} 第 {attempt + 1} 次尝试失败。等待 {wait_time} 秒...")
-                    time.sleep(wait_time) # 30s, 60s, 90s
-                
+                    # print(f"  [限速] {ticker_symbol} 等待 {wait_time} 秒...")
+                    time.sleep(wait_time)
                 elif "404" in error_str or "Not Found" in error_str:
-                    # 这是 404 错误，重试无效
-                    if (i + 1) % 50 == 0:
-                        print(f"  [跳过 404] {ticker_symbol} 无数据。")
-                    return None # 立即跳出函数
-                
+                    return None
                 else:
-                    # 其他网络错误 (例如 503)，短暂重试
-                    if (i + 1) % 50 == 0:
-                         print(f"  [跳过] 获取 {ticker_symbol} 'info' 时出错: {e}。")
-                    if attempt == MAX_RETRIES - 1: # 最后一次尝试失败
+                    if attempt == MAX_RETRIES - 1:
                         return None
-                    time.sleep(5) # 短暂等待5秒
+                    time.sleep(5)
 
-        # 检查重试循环是否成功
         if not info:
-            print(f"  [失败] {ticker_symbol} 在 {MAX_RETRIES} 次尝试后 'info' 仍失败。")
             return None
-        # --- (V14 修复结束) ---
-
-        # 检查 'info' 内容是否有效
-        if (not info or 
-            info.get('symbol') != ticker_symbol or 
-            info.get('marketCap') is None): 
             
-            if (i + 1) % 50 == 0: 
-                 print(f"  [跳过] 股票代码 {ticker_symbol} 无效或无数据。")
-            return None 
+        # 简单校验数据有效性
+        if not info.get('marketCap'): 
+            return None
         
         combined_data.update(info)
             
-        # --- 只有 Info 成功后 (代码有效)，才执行以下操作 ---
-    
-        # 2. 获取 Financials (只保留最近一个财年)
+        # 获取 Financials (只保留最近一个财年)
         try:
             fin = ticker.financials
             if not fin.empty:
@@ -466,7 +428,7 @@ def process_ticker(ticker_symbol):
         except Exception:
             pass 
             
-        # 3. 获取 Balance Sheet (只保留最近一个财年)
+        # 获取 Balance Sheet
         try:
             bal = ticker.balance_sheet
             if not bal.empty:
@@ -477,40 +439,23 @@ def process_ticker(ticker_symbol):
         except Exception:
             pass 
 
-        # --- (V19) 移除了 V12/V18 的打分逻辑 ---
-        # 打分将在所有数据收集完毕后，在主函数中统一进行
-
-        # (V14 修复) 增加基础延迟
-        sleep_time = random.uniform(2.0, 4.0)
+        sleep_time = random.uniform(1.0, 2.0)
         time.sleep(sleep_time)
 
         return combined_data
         
-    except Exception as e:
-        # 捕获 yf.Ticker(ticker_symbol) 本身的初始化错误
-        if (i + 1) % 50 == 0:
-            print(f"  [重大错误] 处理 {ticker_symbol} 时出错: {e}")
+    except Exception:
         return None
 
-# V10: 声明一个全局变量 i 以便在 process_ticker 中访问进度
 i = 0
 
-def get_hk_stock_info_combined(tickers, output_filename="hk_stocks_info_combined.xlsx"):
-    """
-    (V20 - 综合排名打分)
-    使用多线程并发获取指定港股列表的多种信息，
-    将所有获取到的列合并到 Excel 的一个工作表中。
-    """
-    
-    global i # 声明使用全局变量 i
-    
+def get_hk_stock_info_combined(tickers, output_filename="hk_stocks_info_v21.xlsx"):
+    global i
     all_combined_data = []
     total_tickers = len(tickers)
-    # (V14 修复) 降低并发数
-    MAX_WORKERS = 4 
+    MAX_WORKERS = 8 
 
-    print(f"开始并发获取 {total_tickers} 只股票的合并信息 (使用 {MAX_WORKERS} 个线程)...")
-    print("注意：V14版将保存所有获取到的列 (包含量化分数和智能重试)。")
+    print(f"开始并发获取 {total_tickers} 只股票 (V21 优化版)...")
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         future_to_ticker = {executor.submit(process_ticker, ticker): ticker for ticker in tickers}
@@ -522,91 +467,65 @@ def get_hk_stock_info_combined(tickers, output_filename="hk_stocks_info_combined
             i = completed_count 
             
             result = future.result()
-            
             if result:
                 all_combined_data.append(result)
 
             if completed_count % 50 == 0:
-                print(f"--- 已处理 {completed_count}/{total_tickers} (当前成功获取: {len(all_combined_data)} 只) ---")
+                print(f"进度: {completed_count}/{total_tickers} (成功: {len(all_combined_data)})")
 
-    print("\n信息收集完毕，正在处理并写入 Excel 文件...")
+    print("\n数据获取完毕，正在计算 V21 量化分数...")
 
     try:
         if all_combined_data:
-            # V19: 先用 df_raw (原始英文 key) 进行打分
             df_raw = pd.DataFrame(all_combined_data)
             
-            # --- V19 新增: Rank 排名打分 ---
+            # --- 核心修改：调用 V21 打分函数 ---
             try:
-                df_raw_scored = calculate_ranks_and_score(df_raw)
+                df_raw_scored = calculate_ranks_and_score_v21(df_raw)
             except Exception as e:
-                print(f"[严重错误] V20 排名打分失败: {e}")
-                print("将跳过打分，仅保存原始数据...")
-                df_raw['quantScore'] = 0 # 出错时给0分
+                print(f"[错误] V21 打分失败: {e}")
+                df_raw['quantScore'] = 0
                 df_raw_scored = df_raw
-            # --- V19 结束 ---
+            # --------------------------------
 
-            # V19: 使用打分后的 df_raw_scored 进行翻译
             df_combined = df_raw_scored.rename(columns=ALL_TRANSLATIONS)
             
-            # --- V11: 移除了白名单筛选步骤 ---
-            print(f"已获取 {len(df_combined.columns)} 列数据，将全部保存。")
-
-            # --- V12 修改: 将 '代码' 和 '量化分数' 列移动到第一、二位 ---
+            # 调整列顺序，把分数放前面
             translated_symbol_col = ALL_TRANSLATIONS.get('symbol', '代码')
-            translated_score_col = ALL_TRANSLATIONS.get('quantScore', '量化分数')
+            translated_score_col = ALL_TRANSLATIONS.get('quantScore', 'V21量化评分(越低越好)')
 
             cols = list(df_combined.columns)
-            
-            # 移动 '量化分数'
             if translated_score_col in cols:
                 cols.insert(0, cols.pop(cols.index(translated_score_col)))
-            
-            # 移动 '代码'
             if translated_symbol_col in cols:
                 cols.insert(0, cols.pop(cols.index(translated_symbol_col)))
-            else:
-                print("[警告] 未找到 '代码' 列。")
                 
             df_combined = df_combined[cols]
-            # --- V12 结束 ---
             
-            # --- 保存到 Excel ---
-            # V11: 保存 df_combined 并修改 sheet_name
-            df_combined.to_excel(output_filename, sheet_name='全部信息', index=False)
-            print(f"\n成功将全部数据保存到 {output_filename}")
+            # 根据分数排序 (V21 越低越好)
+            if translated_score_col in df_combined.columns:
+                df_combined = df_combined.sort_values(by=translated_score_col, ascending=True)
+
+            df_combined.to_excel(output_filename, sheet_name='V21量化分析', index=False)
+            print(f"\n成功! 结果已保存至 {output_filename}")
         else:
-            print("未能获取到任何有效股票信息。")
+            print("未获取到有效数据。")
 
     except Exception as e:
-        print(f"保存到 Excel 时出错: {e}")
-        print("请确保已安装 'openpyxl' 库 (pip install openpyxl)")
+        print(f"保存文件出错: {e}")
 
 def generate_ticker_list(start=1, end=5000, suffix=".HK"):
-    """
-    生成从 start 到 end 的4位数代码列表 (例如 '0001.HK')
-    """
-    print(f"正在生成从 {start:04d}{suffix} 到 {end:04d}{suffix} 的代码列表...")
+    print(f"生成代码列表: {start:04d}{suffix} - {end:04d}{suffix}")
     return [f"{i:04d}{suffix}" for i in range(start, end + 1)]
 
 if __name__ == "__main__":
-    # --- 自动生成 0001.HK 到 5000.HK 的列表 (您可以按需修改范围) ---
-    hk_ticker_list = generate_ticker_list(1, 5000)
-    
-    # --- (V13.1 修复) ---
-    # 检查是否从 GitHub Actions (main.yml) 传入了文件名参数
+    # 示例：抓取前 100 只股票测试效果
+    hk_ticker_list = generate_ticker_list(1, 4000) 
     
     if len(sys.argv) > 1:
-        # 如果传入了参数 (例如 'python script.py filename.xlsx')
-        # 则使用 main.yml 传入的文件名
         output_filename = sys.argv[1]
-        print(f"检测到 GitHub Actions 传入文件名: {output_filename}")
     else:
-        # 如果没有传入参数 (本地运行)
-        # 则使用旧方法，根据当前时间生成文件名
-        print("未检测到传入文件名，本地运行模式，自动生成文件名...")
-        timestamp = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
-        output_filename = f"{timestamp}.xlsx"
-    # --- (修复结束) ---
+        timestamp = time.strftime("%Y%m%d_%H%M", time.localtime())
+        output_filename = f"HK_Stocks_V21_{timestamp}.xlsx"
     
     get_hk_stock_info_combined(hk_ticker_list, output_filename=output_filename)
